@@ -1,0 +1,327 @@
+---
+title: "Untitled"
+author: "untilted"
+date: "8/13/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Preparation
+# Function for converting from natural units to coded units
+convert.N.to.C <- function(U,UH,UL){
+  x <- (U - (UH+UL)/2) / ((UH-UL)/2)
+  return(x)
+}
+
+# Function for converting from coded units to natural units
+convert.C.to.N <- function(x,UH,UL){
+  U <- x*((UH-UL)/2) + (UH+UL)/2
+  return(U)
+}
+```
+
+
+\newpage
+```{r}
+#Phase I
+data=read.csv("RESULTS_20756841_2021-08-14.csv",header=T)
+data$Prev.Length <- convert.N.to.C(data$Prev.Length, 120, 100)
+data$Match.Score <- convert.N.to.C(data$Match.Score, 100, 80)
+data$Tile.Size <- convert.N.to.C(data$Tile.Size, 0.3,0.1)
+y=data$Browse.Time
+model=lm(y~(Prev.Length+Match.Score+Tile.Size)^2,data=data)
+summary(model)
+
+agg.PL <- aggregate(data$Browse.Time, by = list(data$Prev.Length), FUN = mean)
+plot(x = 1:2, y = agg.PL$x, 
+     pch = 16, ylim = c(16, 21), xaxt = "n", xlab = "Preview Length", 
+     ylab = "Average browsing time", main = "Main Effect of Preview Length")
+lines(x = 1:2, y = agg.PL$x)
+axis(side = 1, at = c(1,2), labels = c(100,120))
+
+agg.PL <- aggregate(data$Browse.Time, by = list(data$Match.Score), FUN = mean)
+plot(x = 1:2, y = agg.PL$x, 
+     pch = 16, ylim = c(16, 21), xaxt = "n", xlab = "Match Scroe ", 
+     ylab = "Average browsing time", main = "Main Effect of Match Scroe")
+lines(x = 1:2, y = agg.PL$x)
+axis(side = 1, at = c(1,2), labels = c(80,100))
+```
+
+drop tile.size
+
+\newpage
+```{r}
+#Phase II -2.1 Curvature Test
+
+# Function to create blues
+blue_palette <- colorRampPalette(c(rgb(247,251,255,maxColorValue = 255), rgb(8,48,107,maxColorValue = 255)))
+
+#read data
+data2=read.csv("2.0.csv",header=T)
+table(data2$Prev.Length,data2$Match.Score)
+
+## Determine whether we're close to the optimum to begin with
+## (i.e, check whether the pure quadratic effect is significant)
+ph1 <- data.frame(y = data2$Browse.Time,
+                  x1 = convert.N.to.C(U = data2$Prev.Length, UH = 120, UL = 100),
+                  x2 = convert.N.to.C(U = data2$Match.Score, UH = 100, UL = 80))
+ph1$xPQ <- (ph1$x1^2 + ph1$x2^2)/2
+
+## Check the average browsing time in each condition:
+aggregate(ph1$y, by = list(x1 = ph1$x1, x2 = ph1$x2), FUN = mean)
+
+## The difference in average browsing time in factorial conditions vs. the center 
+## point condition
+mean(ph1$y[ph1$xPQ != 0]) - mean(ph1$y[ph1$xPQ == 0])
+
+
+## Check to see if that's significant
+m <- lm(y~x1+x2+x1*x2+xPQ, data = ph1)
+summary(m)
+```
+
+```{r}
+## steepest descent
+library("plot3D")
+m.fo <- lm(y~x1+x2, data = ph1)
+beta0 <- coef(m.fo)[1]
+beta1 <- coef(m.fo)[2]
+beta2 <- coef(m.fo)[3]
+grd <- mesh(x = seq(convert.N.to.C(U = 30, UH = 120, UL = 100), 
+                    convert.N.to.C(U = 120, UH = 120, UL = 100), 
+                    length.out = 100), 
+            y = seq(convert.N.to.C(U = 0, UH = 100, UL = 80), 
+                    convert.N.to.C(U = 100, UH = 100, UL = 80), 
+                    length.out = 100))
+x1 <- grd$x
+x2 <- grd$y
+eta.fo <- beta0 + beta1*x1 + beta2*x2
+# 2D contour plot
+contour(x = seq(convert.N.to.C(U = 30, UH = 120, UL =100), 
+                convert.N.to.C(U = 120, UH = 120, UL = 100), 
+                length.out = 100),
+        y = seq(convert.N.to.C(U = 0, UH = 100, UL = 80), 
+                convert.N.to.C(U = 100, UH = 100, UL = 80), 
+                length.out = 100), 
+        z = eta.fo, xlab = "x1 (Preview Length)", ylab = "x2 (Match Score)",
+        nlevels = 15, col = blue_palette(15), labcex = 0.9, asp=0.25)
+abline(a = 0, b = beta2/beta1, lty = 2)
+points(x = 0, y = 0, col = "red", pch = 16)
+
+
+# The gradient vector
+g <- matrix(c(beta1, beta2), nrow = 1)
+
+# We will take steps of size 5 seconds in preview length. In coded units this is
+PL.step <- convert.N.to.C(U = 110 + 5, UH = 120, UL = 100)
+lamda <- PL.step/abs(beta1)
+
+## Step 0: The center point we've already observed
+x.old <- matrix(0, nrow=1, ncol=2)
+text(x = 0, y = 0+0.25, labels = "0")
+step0 <- data.frame(Prev.Length = convert.C.to.N(x = 0, UH = 120, UL = 100), 
+                 Match.Score = convert.C.to.N(x = 0, UH = 100, UL = 80))
+
+## Step 1: 
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "1")
+step1 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100), 
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 2: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "2")
+step2 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100), 
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 3: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "3")
+step3 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100), 
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 4: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "4")
+step4 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100), 
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 5: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "5")
+step5 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100), 
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 6: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "6")
+step6 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100), 
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 7: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "6")
+step7 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100), 
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 8: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "6")
+step8 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100), 
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+
+## The following is a list of the conditions along the path of steepest descent
+pstd.cond <- data.frame(Step = 0:8, rbind(step0, step1, step2, step3, step4, step5, step6, step7, step8))
+pstd.cond
+```
+```{r}
+
+##########Find MOI for each
+netflix.ph2 <- read.csv("3.0.csv",header=T)
+
+## Calculate the average browsing time in each of these conditions and find the 
+## condition that minimizes it
+pstd.means <- aggregate(netflix.ph2$Browse.Time, 
+                        by = list(Prev.Length = netflix.ph2$Prev.Length, 
+                                  Match.Score = netflix.ph2$Match.Score), 
+                        FUN = mean)
+
+plot(x = 0:8, y = pstd.means$x[9:1],
+     type = "l", xlab = "Step Number", ylab = "Average Browsing Time")
+points(x = 0:8, y = pstd.means$x[9:1],
+       col = "red", pch = 16)
+pstd.cond
+pstd.means
+```
+```{r}
+convert.C.to.N(sqrt(2),95,75)
+convert.C.to.N(-sqrt(2),95,75)
+convert.C.to.N(sqrt(2),75,55)
+convert.C.to.N(-sqrt(2),75,55)
+```
+
+```{r}
+#Curvature Test for Final Region
+## (i.e, check whether the pure quadratic effect is significant)
+data3=read.csv("3.0_3.csv",header=T)
+ph2 <- data.frame(y = data3$Browse.Time,
+                  x1 = convert.N.to.C(U = data3$Prev.Length, UH = 95, UL = 75),
+                  x2 = convert.N.to.C(U = data3$Match.Score, UH = 75, UL = 55))
+ph2$xPQ <- (ph2$x1^2 + ph2$x2^2)/2
+
+## Check the average browsing time in each condition:
+aggregate(ph2$y, by = list(x1 = ph2$x1, x2 = ph2$x2), FUN = mean)
+
+## The difference in average browsing time in factorial conditions vs. the center 
+## point condition
+mean(ph2$y[ph2$xPQ != 0]) - mean(ph2$y[ph2$xPQ == 0])
+
+
+## Check to see if that's significant
+m1 <- lm(y~x1+x2+x1*x2+xPQ, data = ph2)
+summary(m1)
+```
+
+
+
+
+
+
+```{r}
+# phase III
+netflix <- read.csv("4.0.csv",header=T)
+table(netflix$Prev.Length,netflix$Match.Score)
+
+netflix$Prev.Length <- convert.N.to.C(netflix$Prev.Length,75, 55)
+netflix$Match.Score <- convert.N.to.C(netflix$Match.Score,83, 63)
+## We then fit the full 2nd-order response surface
+model <- lm(Browse.Time ~ Prev.Length + Match.Score + Prev.Length*Match.Score + I(Prev.Length^2) + I(Match.Score^2), data = netflix)
+summary(model)
+
+anova(model)
+```
+```{r}
+## Let's visualize this surface:
+beta0 <- coef(model)[1]
+beta1 <- coef(model)[2]
+beta2 <- coef(model)[3]
+beta12 <- coef(model)[6]
+beta11 <- coef(model)[4]
+beta22 <- coef(model)[5]
+grd <- mesh(x = seq(convert.N.to.C(U = 61, UH = 81, UL = 61), 
+                    convert.N.to.C(U = 81, UH = 81, UL = 61), 
+                    length.out = 100), 
+            y = seq(convert.N.to.C(U = 63, UH = 83, UL = 63), 
+                    convert.N.to.C(U = 83, UH = 83, UL = 63), 
+                    length.out = 100))
+x1 <- grd$x
+x2 <- grd$y
+eta.so <- beta0 + beta1*x1 + beta2*x2 + beta12*x1*x2 + beta11*x1^2 + beta22*x2^2
+
+# 2D contour plot (coded units)
+contour(x = seq(convert.N.to.C(U = 61, UH = 81, UL = 61), 
+                    convert.N.to.C(U = 81, UH = 81, UL = 61), 
+                length.out = 100), 
+        y = seq(convert.N.to.C(U = 63, UH = 83, UL = 63), 
+                    convert.N.to.C(U = 83, UH = 83, UL = 63), 
+                length.out = 100), 
+        z = eta.so, xlab = "x1", ylab = "x2",
+        nlevels = 20, col = blue_palette(20), labcex = 0.9)
+
+## Let's find the maximum of this surface and the corresponding factor levels 
+## at which this is achieved
+b <- matrix(c(beta1,beta2), ncol = 1)
+B <- matrix(c(beta11, 0.5*beta12, 0.5*beta12, beta22), nrow = 2, ncol = 2)
+x.s <- -0.5*solve(B) %*% b 
+points(x = x.s[1], y = x.s[2], col = "red", pch = 16)
+```
+```{r}
+# The predicted book rate at this configuration is:
+eta.so.opt=beta0+beta1*x.s[1]+beta2*x.s[2]+beta12*x.s[1]*x.s[2]+beta11*x.s[1]^2+beta22*x.s[2]^2
+eta.so.opt
+
+# In natural units this optimum is located at
+convert.C.to.N(x = x.s[1,1], UH = 81, UL = 61)
+convert.C.to.N(x = x.s[2,1], UH = 83, UL = 63)
+
+
+# Remake the contour plot but in natural units
+contour(x = seq(61, 81, length.out = 100), 
+        y = seq(63, 83, length.out = 100), 
+        z = eta.so, xlab = "Preview Length", ylab = "Match Score",
+        nlevels = 20, col = blue_palette(20), labcex = 0.9)
+
+points(x = convert.C.to.N(x = x.s[1,1], UH = 81, UL = 61),
+       y = convert.C.to.N(x = x.s[2,1], UH = 83, UL = 63), 
+       col = "red", pch = 16)
+```
+
+```{r}
+## 95% prediction interval at this optimum:
+pred <- predict(model, newdata = data.frame(Prev.Length=x.s[1,1], Match.Score=x.s[2,1]), type = "response", se.fit = TRUE)
+pred 
+print(paste("Prediction: ", pred$fit, sep = ""))
+print(paste("95% Prediction interval: (", pred$fit-qnorm(0.975)*pred$se.fit, ",", pred$fit+qnorm(0.975)*pred$se.fit, ")", sep = ""))
+```
+
+
